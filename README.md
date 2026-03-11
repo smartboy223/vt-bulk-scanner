@@ -9,8 +9,6 @@
 
 A **web app** that runs on your machine and talks to VirusTotal’s API. Drop in your IOC list (or paste it), hit *Start*, and get detection results — with **multiple API keys**, **caching**, and **XLSX export**. No data leaves your box except the VT API calls.
 
-**Built on [munin](https://github.com/Neo23x0/munin)** by [Neo23x0 (Florian Roth)](https://github.com/Neo23x0) — we extended it into this VT-focused web scanner and kept the credits front and center. 🙌
-
 ---
 
 ## 🚀 Quick start
