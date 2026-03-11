@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}{{ scan.name }} — VT Bulk Scanner{% endblock %}
+{% block content %}
+
+<!-- Compact breadcrumb + actions bar -->
+<div class="scan-topbar">
+    <div class="flex aic gap2">
+        <a href="/" class="t3" style="font-size:12px">&larr; Dashboard</a>
+        <span class="t4">/</span>
+        <span class="t1" style="font-size:14px;font-weight:600">{{ scan.name }}</span>
+        <span class="b-status s-{{ scan.status }}" id="sStat">{{ scan.status }}</span>
+    </div>
+    <div class="flex gap2">
+        {% if scan.status in ('created','paused','error') %}
+        <button class="btn btn-go btn-lg" id="btnStart" onclick="startScan()">{% if scan.status=='created' %}Start Scan{% else %}Resume{% endif %}</button>
+        {% endif %}
+        {% if scan.status == 'running' %}
+        <button class="btn btn-amber" id="btnPause" onclick="pauseScan()">Pause</button>
+        {% endif %}
+        <a href="/scan/{{ scan.scan_id }}/download" class="btn btn-cy">Download XLSX</a>
+        <button class="btn btn-red btn-sm" onclick="deleteScan()">&times;</button>
+    </div>
+</div>
+
+<!-- Progress section: bar + inline stats -->
+<div class="progress-section" id="progSection">
+    <div class="pbar pbar-lg" id="pWrap">
+        <div class="pfill" id="pBar" style="width:{{ scan.progress_percent }}%;{% if scan.status=='completed' %}background:var(--green){% elif scan.status=='error' %}background:var(--red){% elif scan.status=='paused' %}background:var(--amber){% endif %}"></div>
+    </div>
+    <div class="progress-stats">
+        <span class="ps"><strong class="tgr" id="sDone">{{ scan.completed_count }}</strong><span class="t4"> done</span></span>
+        <span class="ps-sep"></span>
+        <span class="ps"><strong class="trd" id="sFail">{{ scan.failed_count }}</strong><span class="t4"> fail</span></span>
+        <span class="ps-sep"></span>
+        <span class="ps"><strong class="t3" id="sPend">{{ scan.pending_count }}</strong><span class="t4"> pending</span></span>
+        <span class="ps-sep"></span>
+        <span class="ps"><strong class="tpu" id="sCache">{{ scan.cached_count }}</strong><span class="t4"> cached</span></span>
+        <span class="ps-sep"></span>
+        <span class="ps"><strong class="tcy" id="sProg">{{ scan.progress_percent }}%</strong></span>
+        <span class="ps-sep"></span>
+        <span class="ps"><span class="t3" id="sElap">--</span><span class="t4"> elapsed</span></span>
+        <span class="ps-sep"></span>
+        <span class="ps"><span class="tcy" id="sSpd">--</span><span class="t4"> /min</span></span>
+        <span class="ps-sep"></span>
+        <span class="ps"><span class="tam" id="sETA">--</span><span class="t4"> est.</span></span>
+    </div>
+</div>
+
+<!-- Wait banner -->
+<div class="wbanner hidden" id="waitBanner"><span class="spinner"></span><span id="waitText"></span></div>
+
+<!-- Results table (full width) -->
+<div class="card mb2">
+    <div class="card-h">
+        <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>Results <span class="t4" style="font-weight:400;margin-left:6px" id="sTotal">{{ scan.total }}</span></h2>
+        <div class="flex gap2">
+            <input type="text" class="fi" id="fText" placeholder="Filter..." style="width:150px;padding:5px 10px;font-size:11px" oninput="filterR()">
+            <select class="fs" id="fType" style="width:90px;padding:5px;font-size:11px" onchange="filterR()">
+                <option value="">All</option><option value="md5">MD5</option><option value="sha1">SHA1</option><option value="sha256">SHA256</option><option value="ip">IP</option><option value="domain">Domain</option>
+            </select>
+            <select class="fs" id="fRate" style="width:90px;padding:5px;font-size:11px" onchange="filterR()">
+                <option value="">All</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="clean">Clean</option>
+            </select>
+        </div>
+    </div>
+    <div style="padding:0"><div class="tw" style="max-height:calc(100vh - 340px);overflow-y:auto">
+        <table>
+            <thead><tr><th>#</th><th>Indicator</th><th>Type</th><th></th><th>Rating</th><th>Detection</th><th>Info</th><th>VT</th></tr></thead>
+            <tbody id="tBody">
+                {% for ind in scan.indicators %}
+                <tr class="rr" data-v="{{ ind.value }}" data-t="{{ ind.type }}" data-r="{{ (ind.result or {}).get('rating','-') }}" data-s="{{ ind.status }}">
+                    <td class="t4">{{ loop.index }}</td>
+                    <td><span class="mono" title="{{ ind.value }}">{{ ind.value[:40] }}{% if ind.value|length > 40 %}..{% endif %}</span>{% if ind.get('from_cache') %} <span class="b-cached">CACHE</span>{% endif %}</td>
+                    <td>{% set tc='b-hash' if ind.type in ('md5','sha1','sha256') else ('b-ip' if ind.type=='ip' else 'b-domain') %}<span class="b-type {{ tc }}">{{ ind.type }}</span></td>
+                    <td>{% if ind.status=='completed' %}<span class="tgr">&#10003;</span>{% elif ind.status=='failed' %}<span class="trd">&#10007;</span>{% else %}<span class="t4">&#8943;</span>{% endif %}</td>
+                    <td>{% if ind.result %}{% set r=ind.result.get('rating','unknown') %}<span class="badge b-{{ r }}">{{ r }}</span>{% else %}<span class="t4">-</span>{% endif %}</td>
+                    <td>{% if ind.result and ind.result.get('found') %}{% set dd=ind.result.get('detection_display',ind.result.get('detection_ratio','-')) %}{% set p=ind.result.get('positives',0) or 0 %}<span style="font-weight:600;{% if p > 10 %}color:var(--red){% elif p > 0 %}color:var(--amber){% else %}color:var(--green){% endif %}">{{ dd }}</span>{% elif ind.result and not ind.result.get('found') %}<span class="t4">N/F</span>{% else %}<span class="t4">-</span>{% endif %}</td>
+                    <td class="t3" style="font-size:11px">{% if ind.result and ind.result.get('found') %}{{ ind.result.get('file_type',ind.result.get('country','-')) }}{% elif ind.status=='failed' and ind.result %}<span class="trd">{{ ind.result.get('error','')[:20] }}</span>{% else %}-{% endif %}</td>
+                    <td>{% set vs='file' if ind.type in ('md5','sha1','sha256') else ind.type %}{% if ind.status=='completed' %}<a href="https://www.virustotal.com/gui/{{ vs }}/{{ ind.value }}" target="_blank" class="btn btn-sm" style="padding:2px 6px;font-size:9.5px">VT</a>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div></div>
+</div>
+
+<!-- Activity Log (compact, collapsible) -->
+<div class="card">
+    <div class="card-h" style="cursor:pointer" onclick="toggleLog()">
+        <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>Activity Log</h2>
+        <div class="flex aic gap2">
+            <div id="logSpin" class="hidden"><span class="spinner"></span></div>
+            <span class="t4" style="font-size:11px" id="logToggle">&#9662;</span>
+        </div>
+    </div>
+    <div id="logBody" class="hidden">
+        <div class="card-b" style="padding:8px 12px">
+            <div class="log" id="logC">
+                {% for e in scan.log[-30:] %}<div><span class="lt">[{{ e.time }}]</span><span class="lm">{{ e.message }}</span></div>{% endfor %}
+                {% if not scan.log %}<div class="t4">No activity yet.</div>{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.scan-topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px}
+.progress-section{background:var(--glass);backdrop-filter:blur(12px);border:1px solid var(--border);border-radius:var(--r2);padding:16px 20px;margin-bottom:16px}
+.scan-active .progress-section{animation:scanPulse 2.5s ease-in-out infinite}
+.progress-stats{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;font-size:13px}
+.ps{display:inline-flex;align-items:center;gap:3px}
+.ps strong{font-size:15px}
+.ps-sep{width:1px;height:14px;background:var(--border);margin:0 4px}
+@media(max-width:700px){.ps-sep{display:none}.progress-stats{gap:12px}}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SID='{{ scan.scan_id }}';
+let poll=null, cs='{{ scan.status }}', prevStatus='{{ scan.status }}', titleFlash=null, origTitle=document.title;
+
+function fmt(s){if(!s||s<=0)return'--';s=Math.round(s);if(s<60)return s+'s';const m=Math.floor(s/60),sc=s%60;if(m<60)return m+'m '+sc+'s';return Math.floor(m/60)+'h '+(m%60)+'m'}
+function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+function toggleLog(){document.getElementById('logBody').classList.toggle('hidden');const tg=document.getElementById('logToggle');tg.innerHTML=tg.innerHTML==='&#9662;'?'&#9652;':'&#9662;'}
+
+// --- Completion alerts ---
+function playBeep(){
+    try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const o=ctx.createOscillator();const g=ctx.createGain();
+    o.connect(g);g.connect(ctx.destination);o.type='sine';o.frequency.value=880;g.gain.value=0.15;
+    o.start();o.stop(ctx.currentTime+0.15);
+    setTimeout(()=>{const o2=ctx.createOscillator();const g2=ctx.createGain();o2.connect(g2);g2.connect(ctx.destination);o2.type='sine';o2.frequency.value=1100;g2.gain.value=0.12;o2.start();o2.stop(ctx.currentTime+0.2)},200);
+    }catch(e){}
+}
+
+function showBanner(type, msg){
+    const old=document.querySelector('.done-banner');if(old)old.remove();
+    const cls=type==='ok'?'done-banner-ok':type==='err'?'done-banner-err':'done-banner-pause';
+    const div=document.createElement('div');div.className='done-banner '+cls;
+    div.innerHTML=msg+'<span class="close-x" onclick="this.parentElement.remove()">&times;</span>';
+    document.body.insertBefore(div,document.querySelector('.page'));
+}
+
+function sendNotification(title, body){
+    if(!('Notification' in window))return;
+    if(Notification.permission==='granted'){new Notification(title,{body:body,icon:'/favicon.ico'});}
+    else if(Notification.permission!=='denied'){Notification.requestPermission().then(p=>{if(p==='granted')new Notification(title,{body:body});});}
+}
+
+function flashTitle(msg){
+    if(titleFlash)return;
+    let on=true;
+    titleFlash=setInterval(()=>{document.title=on?msg:origTitle;on=!on;},1500);
+    window.addEventListener('focus',function stopFlash(){clearInterval(titleFlash);titleFlash=null;document.title=origTitle;window.removeEventListener('focus',stopFlash);},{once:false});
+}
+
+function onScanFinished(d){
+    if(d.status==='completed'){
+        showBanner('ok','Scan Complete &mdash; '+d.completed+' results ready. <a href="/scan/'+SID+'/download">Download XLSX</a>');
+        sendNotification('VT Scan Complete',d.completed+' of '+d.total+' results ready');
+        flashTitle('Scan Complete!');playBeep();
+    }else if(d.status==='error'){
+        showBanner('err','Scan stopped due to error: '+(d.error_message||'unknown'));
+        sendNotification('VT Scan Error','Scan stopped');flashTitle('Scan Error!');
+    }else if(d.status==='paused'&&d.pause_reason==='quota_exhausted'){
+        showBanner('pause','Scan paused &mdash; API quota exhausted. Add more keys or resume tomorrow.');
+        sendNotification('VT Scan Paused','Quota exhausted');flashTitle('Quota Exhausted');
+    }
+}
+
+// Request notification permission early
+if('Notification' in window && Notification.permission==='default'){Notification.requestPermission();}
+
+// --- Core functions ---
+function startScan(){const b=document.getElementById('btnStart');b.disabled=true;b.innerHTML='<span class="spinner"></span> Starting...';
+    const old=document.querySelector('.done-banner');if(old)old.remove();prevStatus='running';
+    fetch('/api/scan/'+SID+'/start',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success){cs='running';startPoll();updBtns();document.getElementById('logBody').classList.remove('hidden')}else{alert(d.message);b.disabled=false;b.textContent='Start Scan'}}).catch(()=>b.disabled=false)}
+function pauseScan(){const b=document.getElementById('btnPause');if(b){b.disabled=true;b.innerHTML='<span class="spinner"></span>';}fetch('/api/scan/'+SID+'/pause',{method:'POST'})}
+function deleteScan(){if(!confirm('Delete scan?'))return;fetch('/api/scan/'+SID+'/delete',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.href='/';else alert(d.message)})}
+function updBtns(){const s=document.getElementById('btnStart'),p=document.getElementById('btnPause');if(cs==='running'){if(s)s.classList.add('hidden');if(!p){const b=document.createElement('button');b.id='btnPause';b.className='btn btn-amber';b.onclick=pauseScan;b.textContent='Pause';if(s)s.parentElement.insertBefore(b,s)}else{p.classList.remove('hidden');p.disabled=false;p.textContent='Pause'}}else{if(p)p.classList.add('hidden');if(s){s.classList.remove('hidden');s.disabled=false;s.textContent='Resume'}}}
+
+function updUI(d){
+    cs=d.status;
+    document.getElementById('sDone').textContent=d.completed;
+    document.getElementById('sFail').textContent=d.failed;
+    document.getElementById('sPend').textContent=d.pending;
+    document.getElementById('sCache').textContent=d.cached||0;
+    document.getElementById('sProg').textContent=d.progress+'%';
+    document.getElementById('sTotal').textContent=d.total;
+    const se=document.getElementById('sStat');se.textContent=d.status;se.className='b-status s-'+d.status;
+    document.getElementById('sElap').textContent=fmt(d.elapsed_seconds);
+    document.getElementById('sSpd').textContent=d.speed_per_minute>0?'~'+d.speed_per_minute:'--';
+    document.getElementById('sETA').textContent=d.eta_seconds>0?'~'+fmt(d.eta_seconds):'--';
+    const bar=document.getElementById('pBar');bar.style.width=d.progress+'%';
+    const sec=document.getElementById('progSection').parentElement;
+    if(d.status==='completed'){bar.style.background='var(--green)';sec.classList.remove('scan-active')}
+    else if(d.status==='error'){bar.style.background='var(--red)';sec.classList.remove('scan-active')}
+    else if(d.status==='paused'){bar.style.background='var(--amber)';sec.classList.remove('scan-active')}
+    else{bar.style.background='';sec.classList.add('scan-active')}
+    const wb=document.getElementById('waitBanner');
+    if(d.wait_message&&d.status==='running'){wb.classList.remove('hidden');document.getElementById('waitText').textContent=d.wait_message}else{wb.classList.add('hidden')}
+    if(d.results){const rows=document.querySelectorAll('.rr');d.results.forEach((r,i)=>{if(i>=rows.length)return;const row=rows[i];row.setAttribute('data-s',r.status);row.setAttribute('data-r',r.rating);
+        if(r.status==='completed')row.cells[3].innerHTML='<span class="tgr">&#10003;</span>';else if(r.status==='failed')row.cells[3].innerHTML='<span class="trd">&#10007;</span>';
+        if(r.from_cache&&!row.cells[1].querySelector('.b-cached')){const s=document.createElement('span');s.className='b-cached';s.textContent='CACHE';row.cells[1].querySelector('.mono').after(document.createTextNode(' '),s)}
+        if(r.status==='completed'||r.status==='failed'){const rt=r.rating||'unknown';row.cells[4].innerHTML='<span class="badge b-'+rt+'">'+rt+'</span>'}
+        if(r.found){const dd=r.detection_display||r.detection_ratio||'-',p=parseInt(r.positives)||0;let c='var(--green)';if(p>10)c='var(--red)';else if(p>0)c='var(--amber)';row.cells[5].innerHTML='<span style="font-weight:600;color:'+c+'">'+esc(dd)+'</span>'}else if(r.status==='completed'){row.cells[5].innerHTML='<span class="t4">N/F</span>'}
+        if(r.found&&r.file_type&&r.file_type!=='-')row.cells[6].innerHTML='<span class="t3" style="font-size:12px">'+esc(r.file_type)+'</span>';
+        const lc=row.cells[7];if(r.status==='completed'&&!lc.querySelector('a')){const sec=['md5','sha1','sha256'].includes(r.type)?'file':r.type;lc.innerHTML='<a href="https://www.virustotal.com/gui/'+sec+'/'+r.value+'" target="_blank" class="btn btn-sm" style="padding:2px 7px;font-size:10.5px">VT</a>'}
+    })}
+    if(d.log&&d.log.length>0){const lc=document.getElementById('logC');lc.innerHTML='';d.log.forEach(e=>{lc.innerHTML+='<div><span class="lt">['+e.time+']</span><span class="lm">'+esc(e.message)+'</span></div>'});lc.scrollTop=lc.scrollHeight}
+    const sp=document.getElementById('logSpin');if(d.status==='running')sp.classList.remove('hidden');else sp.classList.add('hidden');
+
+    // Fire completion alert when status transitions from running to finished
+    if(prevStatus==='running'&&d.status!=='running'){onScanFinished(d)}
+    prevStatus=d.status;
+
+    updBtns();if(d.status!=='running')stopPoll()
+}
+function doPoll(){fetch('/api/scan/'+SID+'/status').then(r=>r.json()).then(updUI).catch(e=>console.error(e))}
+function startPoll(){if(poll)return;poll=setInterval(doPoll,2000);document.getElementById('logSpin').classList.remove('hidden');document.getElementById('logBody').classList.remove('hidden')}
+function stopPoll(){if(poll){clearInterval(poll);poll=null}document.getElementById('logSpin').classList.add('hidden');document.getElementById('waitBanner').classList.add('hidden')}
+function filterR(){const t=document.getElementById('fText').value.toLowerCase(),tp=document.getElementById('fType').value,rt=document.getElementById('fRate').value;document.querySelectorAll('.rr').forEach(r=>{let s=true;if(t&&!(r.getAttribute('data-v')||'').toLowerCase().includes(t))s=false;if(tp&&r.getAttribute('data-t')!==tp)s=false;if(rt&&r.getAttribute('data-r')!==rt)s=false;r.style.display=s?'':'none'})}
+if(cs==='running'){startPoll();document.querySelector('.page').classList.add('scan-active')}
+</script>
+{% endblock %}

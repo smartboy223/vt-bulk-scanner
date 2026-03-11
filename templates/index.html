@@ -1,0 +1,499 @@
+{% extends "base.html" %}
+{% block title %}VT Bulk Scanner — Dashboard{% endblock %}
+{% block content %}
+
+<!-- Config bar -->
+<div class="topbar" id="topbar">
+    <div class="topbar-summary">
+        <div class="flex aic gap3" style="flex-wrap:wrap">
+            <div class="topbar-item">
+                <span class="topbar-dot {% if api_keys %}dot-ok{% else %}dot-warn{% endif %}"></span>
+                <span>{{ api_keys|length }} API Key{{ 's' if api_keys|length != 1 }}</span>
+                {% if api_keys %}<span class="t4" id="quotaInline"></span>{% endif %}
+            </div>
+            <div class="topbar-item">
+                <span class="topbar-dot dot-ok"></span>
+                <span>Cache: {{ cache_stats.valid }} results ({{ cache_stats.size }})</span>
+            </div>
+        </div>
+        <div class="flex gap2">
+            <button class="btn btn-cy btn-sm" onclick="checkQuota()" id="btnQuota">Check Quota</button>
+            <button class="btn btn-sm" onclick="toggleConfig()" id="btnConfig">Manage Keys &amp; Cache &#9662;</button>
+        </div>
+    </div>
+    <div class="topbar-panel hidden" id="configPanel">
+        <div class="g g2" style="gap:16px">
+            <div>
+                <div class="panel-label">API Keys</div>
+                {% if api_keys %}
+                <div class="mb1">
+                    {% for k in api_keys %}
+                    <div class="kp">
+                        <span class="kl">{{ k.label }}</span>
+                        <code>{{ k.key[:8] }}..{{ k.key[-4:] }}</code>
+                        <span class="t4" style="font-size:10px" id="quota-{{ loop.index0 }}"></span>
+                        <form method="POST" action="/api/keys/delete" style="display:inline;margin:0">
+                            <input type="hidden" name="api_key" value="{{ k.key }}">
+                            <button type="submit" class="btn btn-red btn-sm" onclick="return confirm('Remove?')" style="padding:1px 6px">&times;</button>
+                        </form>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                <form method="POST" action="/api/keys" class="flex gap2 aic" style="flex-wrap:wrap">
+                    <input type="text" name="api_key" class="fi mono" placeholder="64-char VT API key" required pattern="[a-fA-F0-9]{64}" style="width:280px;padding:6px 10px;font-size:13px">
+                    <input type="text" name="label" class="fi" placeholder="Label" style="width:120px;padding:6px 10px;font-size:13px">
+                    <button type="submit" class="btn btn-cy btn-sm">+ Add</button>
+                </form>
+                <div class="fhelp mt1">Free: 4 req/min, 500/day per key. <a href="https://www.virustotal.com/gui/my-apikey" target="_blank">Get key</a></div>
+            </div>
+            <div>
+                <div class="panel-label">VT Results Cache</div>
+                <div class="t2" style="font-size:13px;margin-bottom:8px">{{ cache_stats.valid }} valid / {{ cache_stats.total }} total &middot; {{ cache_stats.size }} on disk</div>
+                <div class="flex gap2">
+                    <button class="btn btn-sm" onclick="clearExpired()">Clear Expired</button>
+                    <button class="btn btn-red btn-sm" onclick="clearAllCache()">Clear All</button>
+                </div>
+                <div class="fhelp mt1">Stores VT results globally (24h). Independent from scan history.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="g g-dashboard" style="gap:24px;margin-top:20px">
+    {% if not has_keys %}
+    <div class="flash flash-error" style="text-align:center">
+        No API keys configured. Click <strong>"Manage Keys &amp; Cache"</strong> above to add your VT API key.
+    </div>
+    {% endif %}
+
+    <!-- New Scan -->
+    <div class="card scan-hero">
+        <div class="card-h">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>New Scan</h2>
+        </div>
+        <div class="card-b">
+            <form method="POST" action="/scan/new" enctype="multipart/form-data" id="newScanForm" onsubmit="return prepareSubmit()">
+                <div class="g g2 scan-form-grid" style="gap:24px">
+                    <!-- Left: inputs -->
+                    <div class="scan-form-left">
+                        <div class="fg">
+                            <label class="fl">Scan Name</label>
+                            <input type="text" name="scan_name" class="fi" placeholder="e.g. March IOCs, Phishing Campaign">
+                        </div>
+
+                        <!-- Drop zone + multi-file -->
+                        <div class="fg">
+                            <label class="fl">Upload Indicator Files</label>
+                            <div class="dropzone" id="dropzone" onclick="document.getElementById('fileHidden').click()">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                <div>Drop files here or <span class="tcy">click to browse</span></div>
+                                <div class="t4" style="font-size:11px">.txt .csv .log .ioc &mdash; multiple files supported</div>
+                            </div>
+                            <input type="file" id="fileHidden" accept=".txt,.csv,.log,.ioc" multiple style="display:none" onchange="addFiles(this.files)">
+                        </div>
+
+                        <!-- File pills -->
+                        <div id="filePills" class="hidden" style="margin-bottom:14px">
+                            <div class="flex aic" style="justify-content:space-between;margin-bottom:6px">
+                                <span class="fl" style="margin:0">Loaded Files</span>
+                                <button type="button" class="btn btn-red btn-sm" onclick="clearAllFiles()" style="padding:2px 8px;font-size:11px">Clear All</button>
+                            </div>
+                            <div id="pillContainer"></div>
+                        </div>
+
+                        <div class="divider">or paste indicators</div>
+                        <div class="fg scan-textarea-wrap">
+                            <textarea name="input_text" class="ft" id="inputText" placeholder="One per line:&#10;44d88612fea8a8f36de82e1278abb02f&#10;evil[.]com&#10;192.168.1.100"></textarea>
+                        </div>
+                        <label class="fcheck"><input type="checkbox" name="force_rescan" id="forceRescan"><span>Force rescan (ignore cache)</span></label>
+                    </div>
+
+                    <!-- Right: live preview -->
+                    <div>
+                        <!-- Spinner / empty / result states -->
+                        <div id="pvEmpty" class="preview-empty">
+                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.25"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                            <div class="t4" style="font-size:13px;margin-top:8px">Upload files or paste indicators to validate</div>
+                        </div>
+                        <div id="pvSpinner" class="hidden preview-empty">
+                            <span class="spinner" style="width:24px;height:24px;border-width:3px"></span>
+                            <div class="t3" style="font-size:13px;margin-top:8px">Validating...</div>
+                        </div>
+                        <div id="pvResult" class="hidden">
+                            <!-- Summary bar -->
+                            <div class="pv-summary" id="pvSummary"></div>
+                            <!-- Cache info -->
+                            <div id="pvCache" style="font-size:12px;margin-top:8px"></div>
+                            <!-- Errors & warnings (always visible, above list) -->
+                            <div id="pvAlerts" style="margin-top:10px"></div>
+                            <!-- Paginated indicator list -->
+                            <div id="pvListWrap" style="margin-top:10px">
+                                <div id="pvList" class="pv-list"></div>
+                                <div id="pvPager" class="pv-pager hidden"></div>
+                            </div>
+                        </div>
+
+                        <!-- Submit button (full width) -->
+                        <button type="submit" class="btn btn-go btn-lg scan-submit" id="btnSubmit" {{ 'disabled' if not has_keys }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                            <span id="btnSubmitText">Start Scanning</span>
+                        </button>
+                    </div>
+                </div>
+                <!-- Hidden field to carry merged file content -->
+                <input type="hidden" name="merged_files" id="mergedFiles">
+            </form>
+        </div>
+    </div>
+
+    <!-- Scan History -->
+    <div class="card card-history">
+        <div class="card-h">
+            <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>Scan History</h2>
+            <span class="t3" style="font-size:12px">{{ scans|length }} scan{{ 's' if scans|length != 1 }} &middot; <span class="t4">cached results persist separately</span></span>
+        </div>
+        <div style="padding:0">
+            {% if scans %}
+            <div class="tw">
+                <table>
+                    <thead><tr><th>Scan</th><th>Status</th><th style="min-width:140px">Progress</th><th>Results</th><th>Created</th><th></th></tr></thead>
+                    <tbody>
+                    {% for s in scans %}
+                    <tr>
+                        <td><a href="/scan/{{ s.scan_id }}" style="font-weight:600">{{ s.name }}</a><div class="t4" style="font-size:10px">{{ s.scan_id }}</div></td>
+                        <td><span class="b-status s-{{ s.status }}">{{ s.status }}</span></td>
+                        <td><div class="pbar"><div class="pfill" style="width:{{ s.progress }}%;{% if s.status=='completed' %}background:var(--green){% elif s.status=='error' %}background:var(--red){% elif s.status=='paused' %}background:var(--amber){% endif %}"></div></div><span class="t4" style="font-size:10px">{{ s.progress }}%</span></td>
+                        <td><span class="tgr">{{ s.completed }}</span>{% if s.cached %}<span class="tpu" style="font-size:10px"> ({{ s.cached }} cached)</span>{% endif %}{% if s.failed %}<span class="trd"> / {{ s.failed }} fail</span>{% endif %}<span class="t4"> / {{ s.total }}</span></td>
+                        <td><span class="t3" style="font-size:11px">{{ s.created_at[:16] }}</span></td>
+                        <td><a href="/scan/{{ s.scan_id }}" class="btn btn-sm">Open</a></td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="tc scan-history-empty" style="padding:32px;color:var(--t4)"><div style="font-size:13px">No scans yet</div></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+.topbar{background:var(--glass);backdrop-filter:blur(16px);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden}
+.topbar-summary{padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.topbar-item{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--t2)}
+.topbar-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot-ok{background:var(--green);box-shadow:0 0 6px rgba(46,213,115,.5)}
+.dot-warn{background:var(--amber);box-shadow:0 0 6px rgba(255,165,2,.5)}
+.topbar-panel{padding:16px 20px;border-top:1px solid var(--border2);background:rgba(8,12,24,.4)}
+.panel-label{font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.scan-hero{border:1px solid rgba(0,212,255,.12)}
+.scan-hero:hover{border-color:rgba(0,212,255,.25);box-shadow:0 0 40px rgba(0,212,255,.06)}
+
+.dropzone{border:2px dashed rgba(0,212,255,.18);border-radius:10px;padding:20px;text-align:center;cursor:pointer;
+    transition:all .25s;background:rgba(0,212,255,.02);display:flex;flex-direction:column;align-items:center;gap:6px;font-size:13px;color:var(--t3)}
+.dropzone:hover,.dropzone.dragover{border-color:var(--cyan);background:rgba(0,212,255,.06);color:var(--t1)}
+
+.file-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:var(--surface2);border:1px solid var(--border);
+    border-radius:6px;font-size:12.5px;margin:3px;animation:slideUp .3s ease}
+.file-pill .fp-name{font-weight:600;color:var(--t1)}
+.file-pill .fp-lines{color:var(--t3);font-size:11px}
+.file-pill .fp-x{cursor:pointer;color:var(--red);opacity:.6;font-size:14px;margin-left:2px;transition:opacity .15s}
+.file-pill .fp-x:hover{opacity:1}
+
+.preview-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:220px;color:var(--t4)}
+
+/* New Scan: left column and textarea fill available height */
+.scan-form-left{display:flex;flex-direction:column;min-height:0}
+.scan-form-left .scan-textarea-wrap{flex:1;min-height:200px;display:flex;flex-direction:column}
+.scan-form-left .scan-textarea-wrap .ft{flex:1;min-height:200px;resize:vertical}
+
+.pv-summary{display:flex;flex-wrap:wrap;gap:12px;padding:10px 14px;background:rgba(0,212,255,.04);border:1px solid var(--border);border-radius:8px;font-size:13px}
+.pv-summary .pvs-item{display:flex;align-items:center;gap:4px}
+.pv-summary .pvs-num{font-weight:700;font-size:16px}
+
+.pv-list{font-family:var(--mono);font-size:12px;color:var(--t3)}
+.pv-list .pv-row{padding:3px 0;display:flex;align-items:center;gap:6px}
+
+.pv-pager{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;font-size:12.5px}
+.pv-pager button{background:var(--surface2);border:1px solid var(--border);color:var(--t2);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--sans)}
+.pv-pager button:hover{border-color:var(--cyan);color:var(--cyan)}
+.pv-pager button:disabled{opacity:.3;cursor:default}
+
+.scan-submit{width:100%;margin-top:16px;padding:14px 24px;font-size:15px;font-weight:700;justify-content:center;
+    border:1px solid rgba(46,213,115,.4);transition:all .25s}
+.scan-submit:not(:disabled):hover{box-shadow:0 0 30px rgba(46,213,115,.2);transform:translateY(-2px)}
+
+/* Dashboard grid: second row fills remaining page space */
+.g-dashboard{min-height:calc(100vh - 380px);grid-template-rows:auto 1fr}
+.card-history{display:flex;flex-direction:column;min-height:0}
+.card-history .card-h{flex-shrink:0}
+.card-history > div:last-child{flex:1;min-height:0;display:flex;flex-direction:column}
+.scan-history-empty{flex:1;display:flex;align-items:center;justify-content:center;min-height:120px}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PAGE_SIZE=20;
+let uploadedFiles=[];
+let lastPreviewData=null;
+let pvPage=0;
+
+function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+function toggleConfig(){const p=document.getElementById('configPanel'),b=document.getElementById('btnConfig');p.classList.toggle('hidden');b.innerHTML=p.classList.contains('hidden')?'Manage Keys &amp; Cache &#9662;':'Manage Keys &amp; Cache &#9652;'}
+
+// --- Multi-file upload ---
+function addFiles(fileList){
+    for(const f of fileList){
+        if(!uploadedFiles.some(u=>u.name===f.name&&u.size===f.size)){
+            uploadedFiles.push(f);
+        }
+    }
+    document.getElementById('fileHidden').value='';
+    renderPills();
+    autoValidate();
+}
+
+function removeFile(idx){
+    uploadedFiles.splice(idx,1);
+    renderPills();
+    if(uploadedFiles.length===0&&!document.getElementById('inputText').value.trim()){
+        resetPreview();
+    }else{
+        autoValidate();
+    }
+}
+
+function clearAllFiles(){
+    uploadedFiles=[];
+    renderPills();
+    if(!document.getElementById('inputText').value.trim()) resetPreview();
+    else autoValidate();
+}
+
+function renderPills(){
+    const c=document.getElementById('pillContainer');
+    const w=document.getElementById('filePills');
+    if(uploadedFiles.length===0){w.classList.add('hidden');c.innerHTML='';return;}
+    w.classList.remove('hidden');
+    c.innerHTML='';
+    uploadedFiles.forEach((f,i)=>{
+        const pill=document.createElement('span');pill.className='file-pill';
+        pill.innerHTML='<span class="fp-name">'+esc(f.name)+'</span><span class="fp-lines">('+Math.round(f.size/1024)+'KB)</span><span class="fp-x" onclick="removeFile('+i+')">&times;</span>';
+        c.appendChild(pill);
+    });
+}
+
+// Drag and drop
+const dz=document.getElementById('dropzone');
+['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('dragover')}));
+['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('dragover')}));
+dz.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length)addFiles(ev.dataTransfer.files)});
+
+// --- Auto validate ---
+function resetPreview(){
+    document.getElementById('pvEmpty').classList.remove('hidden');
+    document.getElementById('pvSpinner').classList.add('hidden');
+    document.getElementById('pvResult').classList.add('hidden');
+    lastPreviewData=null;
+    updateSubmitBtn(0);
+}
+
+let avTimer=null;
+function autoValidate(){
+    clearTimeout(avTimer);
+    avTimer=setTimeout(doValidate,300);
+}
+
+function doValidate(){
+    document.getElementById('pvEmpty').classList.add('hidden');
+    document.getElementById('pvSpinner').classList.remove('hidden');
+    document.getElementById('pvResult').classList.add('hidden');
+
+    if(uploadedFiles.length>0){
+        let pending=uploadedFiles.length, allText='';
+        uploadedFiles.forEach(f=>{
+            const reader=new FileReader();
+            reader.onload=function(e){
+                allText+=e.target.result+'\n';
+                pending--;
+                if(pending===0) sendPreview(allText);
+            };
+            reader.readAsText(f);
+        });
+    }else{
+        const t=document.getElementById('inputText').value;
+        if(!t.trim()){resetPreview();return;}
+        sendPreview(t);
+    }
+}
+
+function sendPreview(text){
+    const fd=new FormData();
+    fd.append('input_text',text);
+    fetch('/api/scan/preview',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+        lastPreviewData=d;
+        pvPage=0;
+        document.getElementById('pvSpinner').classList.add('hidden');
+        document.getElementById('pvResult').classList.remove('hidden');
+        renderPreview(d);
+        updateSubmitBtn(d.total);
+    }).catch(()=>{
+        document.getElementById('pvSpinner').classList.add('hidden');
+        document.getElementById('pvEmpty').classList.remove('hidden');
+    });
+}
+
+// --- Paginated preview ---
+function renderPreview(d){
+    // Summary bar
+    const sm=document.getElementById('pvSummary');
+    let sh='<div class="pvs-item"><span class="pvs-num tgr">'+d.total+'</span> valid</div>';
+    for(const[t,c]of Object.entries(d.types)){
+        const cl=['md5','sha1','sha256'].includes(t)?'b-hash':(t==='ip'?'b-ip':'b-domain');
+        sh+='<span class="b-type '+cl+'">'+t+': '+c+'</span>';
+    }
+    if(d.duplicate_count>0) sh+='<div class="pvs-item"><span class="pvs-num tam">'+d.duplicate_count+'</span> dups removed</div>';
+    if(d.rejected_count>0) sh+='<div class="pvs-item"><span class="pvs-num trd">'+d.rejected_count+'</span> rejected</div>';
+    if(d.auto_fixed_count>0) sh+='<div class="pvs-item"><span class="pvs-num tcy">'+d.auto_fixed_count+'</span> auto-fixed</div>';
+    sm.innerHTML=sh;
+
+    // Cache
+    const ci=document.getElementById('pvCache'),fr=document.getElementById('forceRescan').checked;
+    if(!fr&&d.cache_hits>0)ci.innerHTML='<span class="tpu">&#9889; '+d.cache_hits+' cached</span> &middot; <span class="tcy">'+d.new_lookups+' new lookups</span>';
+    else if(fr)ci.innerHTML='<span class="tam">Force rescan: all '+d.total+' queried fresh</span>';
+    else ci.innerHTML='<span class="t3">'+d.total+' lookups needed</span>';
+
+    // Alerts section (errors & warnings always visible)
+    const al=document.getElementById('pvAlerts');
+    let ah='';
+    if(d.auto_fixed_count>0){
+        ah+='<div class="pv-alert pv-alert-info"><div class="pv-alert-title tcy">'+d.auto_fixed_count+' defanged indicator(s) auto-fixed</div>';
+        d.auto_fixed.forEach(f=>{ah+='<div class="pv-alert-line">Line '+f.line+': <s>'+esc(f.original)+'</s> &rarr; <strong>'+esc(f.fixed)+'</strong></div>';});
+        ah+='</div>';
+    }
+    if(d.rejected_count>0){
+        const sev=d.reject_percent>50?'pv-alert-danger':'pv-alert-warn';
+        ah+='<div class="pv-alert '+sev+'"><div class="pv-alert-title">'+d.rejected_count+' line(s) rejected ('+d.reject_percent+'%)</div>';
+        d.rejected.forEach(r=>{ah+='<div class="pv-alert-line">Line '+r.line+': "'+esc(r.text)+'" &mdash; '+r.reason+'</div>';});
+        if(d.reject_percent>50) ah+='<div style="font-weight:700;margin-top:4px">Over 50% rejected. Consider fixing the input file.</div>';
+        ah+='</div>';
+    }
+    if(!d.rejected_count&&!d.auto_fixed_count&&!d.duplicate_count){
+        ah='<div class="pv-alert pv-alert-ok"><div class="pv-alert-title tgr">All lines valid. No issues found.</div></div>';
+    }
+    al.innerHTML=ah;
+
+    // Paginated list
+    renderPage();
+}
+
+function renderPage(){
+    if(!lastPreviewData)return;
+    const d=lastPreviewData, list=d.preview, total=list.length;
+    const pages=Math.ceil(total/PAGE_SIZE);
+    if(pvPage>=pages)pvPage=pages-1;
+    if(pvPage<0)pvPage=0;
+
+    const start=pvPage*PAGE_SIZE, end=Math.min(start+PAGE_SIZE,total);
+    const el=document.getElementById('pvList');
+    el.innerHTML='';
+    for(let i=start;i<end;i++){
+        const ind=list[i];
+        const cl=['md5','sha1','sha256'].includes(ind.type)?'b-hash':(ind.type==='ip'?'b-ip':'b-domain');
+        el.innerHTML+='<div class="pv-row"><span class="b-type '+cl+'">'+ind.type+'</span><span>'+esc(ind.value)+'</span></div>';
+    }
+    if(total>d.total){
+        // preview is capped at 50 from backend but total might be more
+    }
+
+    const pg=document.getElementById('pvPager');
+    if(pages<=1){pg.classList.add('hidden');
+        if(d.total>total)el.innerHTML+='<div class="t4" style="margin-top:4px;font-size:12px">Showing '+total+' of '+d.total+' indicators</div>';
+        return;
+    }
+    pg.classList.remove('hidden');
+    pg.innerHTML='<button onclick="pvPage--;renderPage()" '+(pvPage===0?'disabled':'')+'>&#9664; Prev</button>'+
+        '<span class="t3">Page '+(pvPage+1)+' of '+pages+'</span>'+
+        '<button onclick="pvPage++;renderPage()" '+(pvPage>=pages-1?'disabled':'')+'>Next &#9654;</button>';
+    if(d.total>total)pg.innerHTML+='<span class="t4" style="margin-left:8px;font-size:11px">('+total+' of '+d.total+' shown)</span>';
+}
+
+function updateSubmitBtn(count){
+    const btn=document.getElementById('btnSubmit');
+    const txt=document.getElementById('btnSubmitText');
+    if(count>0){
+        btn.disabled={% if not has_keys %}true{% else %}false{% endif %};
+        txt.textContent='Start Scanning '+count+' Indicators';
+    }else{
+        btn.disabled=true;
+        txt.textContent='Start Scanning';
+    }
+}
+
+// On form submit, merge uploaded files into hidden field
+function prepareSubmit(){
+    if(uploadedFiles.length>0){
+        let pending=uploadedFiles.length, allText='';
+        // Read files synchronously-ish using a blocking approach
+        // Actually we need to prevent default and submit after reading
+        const form=document.getElementById('newScanForm');
+        const ta=document.getElementById('inputText');
+        if(uploadedFiles.length>0&&!ta.value.trim()){
+            // Files were loaded and content sent via preview already
+            // Re-read and put in textarea before submit
+            let p=uploadedFiles.length, txt='';
+            uploadedFiles.forEach(f=>{
+                const r=new FileReader();
+                r.onload=function(e){
+                    txt+=e.target.result+'\n';
+                    p--;
+                    if(p===0){
+                        ta.value=txt;
+                        form.submit();
+                    }
+                };
+                r.readAsText(f);
+            });
+            return false;
+        }
+    }
+    return true;
+}
+
+// Textarea auto-validate
+let dbTimer;
+document.getElementById('inputText').addEventListener('input',function(){
+    clearTimeout(dbTimer);
+    if(this.value.trim()){
+        uploadedFiles=[];renderPills();
+        dbTimer=setTimeout(autoValidate,600);
+    }else if(uploadedFiles.length===0){
+        resetPreview();
+    }
+});
+
+document.getElementById('forceRescan').addEventListener('change',function(){
+    if(lastPreviewData)renderPreview(lastPreviewData);
+});
+
+// --- Config bar functions ---
+function checkQuota(){
+    const b=document.getElementById('btnQuota');b.disabled=true;b.textContent='Checking...';
+    fetch('/api/quota').then(r=>r.json()).then(d=>{b.disabled=false;b.textContent='Check Quota';
+        let inlineText=[];
+        d.keys.forEach((k,i)=>{const el=document.getElementById('quota-'+i);
+            if(k.quota){const q=k.quota,p=q.daily_allowed>0?Math.round(q.daily_used/q.daily_allowed*100):0;let c='var(--green)';if(p>80)c='var(--red)';else if(p>50)c='var(--amber)';
+                if(el)el.innerHTML='<span style="color:'+c+'">'+q.daily_used+'/'+q.daily_allowed+'</span>';
+                inlineText.push(q.daily_remaining+' left');}
+            else if(el){el.innerHTML='<span class="trd">err</span>';}});
+        const qi=document.getElementById('quotaInline');
+        if(qi&&inlineText.length)qi.innerHTML='&middot; <span class="tcy">'+inlineText.join(', ')+'</span>';
+    }).catch(()=>{b.disabled=false;b.textContent='Check Quota';});
+}
+function clearExpired(){fetch('/api/cache/clear-expired',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message);location.reload();})}
+function clearAllCache(){if(!confirm('Clear ALL cached results?'))return;fetch('/api/cache/clear',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message);location.reload();})}
+</script>
+{% endblock %}
