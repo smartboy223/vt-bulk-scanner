@@ -2,9 +2,11 @@
 
 A web-based bulk scanner for VirusTotal with dark mode UI, multi-key parallel scanning, smart quota management, caching, and resume capability.
 
+> **Credits:** This project builds on [**munin**](https://github.com/Neo23x0/munin) by [**Neo23x0 (Florian Roth)**](https://github.com/Neo23x0). See [Credits](#credits) below for details.
+
 ## Credits
 
-This project is based on and extends the ideas and code from **[munin](https://github.com/Neo23x0/munin)** by [Neo23x0 (Florian Roth)](https://github.com/Neo23x0). I used that repository as a starting point and updated/enhanced it into this web-based bulk scanner (VT-only, multi-key, cache, quota handling, XLSX export, etc.). You can fork the [original munin repo](https://github.com/Neo23x0/munin) on GitHub to stay linked as a fork, or keep this as a separate project and link to it in your README (as done here) to credit the source.
+This project is based on and extends the ideas and code from **[munin](https://github.com/Neo23x0/munin)** by **[Neo23x0 (Florian Roth)](https://github.com/Neo23x0)**. I used that repository as a starting point and updated/enhanced it into this web-based bulk scanner (VT-only, multi-key, cache, quota handling, XLSX export, etc.). You can fork the [original munin repo](https://github.com/Neo23x0/munin) on GitHub to stay linked as a fork, or keep this as a separate project and link to it in your README (as done here) to credit the source.
 
 ## Features
 
