@@ -5,6 +5,8 @@ Run:  python web_app.py [--port 5000]
 Open: http://127.0.0.1:PORT (port is chosen automatically if default is busy)
 """
 
+__version__ = "1.0.0"
+
 import os
 import sys
 import socket
@@ -275,7 +277,7 @@ if __name__ == '__main__':
     url = f"http://{host}:{port}"
     print()
     print("  +=============================================+")
-    print("  |       VirusTotal Bulk Scanner               |")
+    print(f"  |   VirusTotal Bulk Scanner v{__version__}            |")
     print("  +=============================================+")
     print()
     print(f"  >>> Open in browser: {url}")

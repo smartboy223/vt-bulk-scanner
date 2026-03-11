@@ -4,7 +4,7 @@ title VirusTotal Bulk Scanner
 color 0B
 echo.
 echo  +=============================================+
-echo  ^|     VirusTotal Bulk Scanner  -  v1          ^|
+echo  ^|     VirusTotal Bulk Scanner  -  v1.0.0       ^|
 echo  +=============================================+
 echo.
 echo  This script will:

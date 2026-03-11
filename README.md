@@ -1,8 +1,20 @@
 # VirusTotal Bulk Scanner
 
-A web-based bulk scanner for VirusTotal with dark mode UI, multi-key parallel scanning, smart quota management, caching, and resume capability.
+**Web-based bulk scanner for VirusTotal** — dark mode UI, multi-key parallel scanning, smart quota management, caching, resume, and XLSX export. Runs locally; no data leaves your machine except VT API calls.
 
 > **Credits:** This project builds on [**munin**](https://github.com/Neo23x0/munin) by [**Neo23x0 (Florian Roth)**](https://github.com/Neo23x0). See [Credits](#credits) below for details.
+
+---
+
+### Set repository About (GitHub)
+
+On your repo page click the **gear icon** next to "About", then set:
+
+- **Description:** `Web-based bulk VirusTotal scanner. Dark mode UI, multi-API keys, cache, resume, XLSX export. Runs locally.`
+- **Website:** (optional) leave blank or add your demo URL.
+- **Topics:** `virustotal` `bulk-scanner` `malware-analysis` `ioc` `threat-intelligence` `python` `flask`
+
+---
 
 ## Credits
 
@@ -125,15 +137,19 @@ Get your API key at [virustotal.com/gui/my-apikey](https://www.virustotal.com/gu
 ```
 ├── web_app.py          # Flask app and API
 ├── scanner_engine.py   # VT scanning, cache, quota logic
-├── start.bat          # Windows: setup and run
+├── start.bat           # Windows: setup and run
 ├── requirements.txt
 ├── README.md
+├── LICENSE             # MIT
+├── CHANGELOG.md        # Version history
 ├── templates/          # HTML (base, index, scan)
 ├── static/
 │   └── images/
 │       └── logo.png    # Dashboard logo
-├── screenshots/       # Screenshots 1–6 for README
-└── data/              # Created at runtime (config, cache, scans)
+├── screenshots/        # Screenshots 1–6 for README
+├── .github/
+│   └── RELEASE_NOTES_v1.0.0.md   # For GitHub Releases
+└── data/               # Created at runtime (config, cache, scans)
 ```
 
 When sharing or publishing: ensure `data/` has no API keys or scan results (clear `data/config.json` and `data/vt_cache.json`, and remove `data/scans/` if present). The app creates empty `data/` on first run.
